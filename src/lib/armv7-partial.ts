@@ -372,8 +372,15 @@ function buildDataProcFields(params: {
           display: `${rs.toString(2).padStart(4,'0')} (${regName(rs)})`,
           description: `Shift amount register: ${regName(rs)}`,
         });
-        fields.push(fixedField('Bit 4', 'b4', 7, 7, 0, 'Bit 7 (MUL disambiguation)'));
-        fields.push(fixedField('Shift by Reg', '1', 4, 4, 1, 'Shift amount from register'));
+        fields.push(fixedField('Bit 7', 'b7', 7, 7, 0, 'Must be 0 in register-shift Operand2 form'));
+        fields.push({
+          name: 'Shift Type', shortName: 'stype',
+          highBit: 6, lowBit: 5, color: 'op2-shift-type',
+          value: shiftType, known: true,
+          display: `${shiftType.toString(2).padStart(2,'0')} (${SHIFT_NAMES[shiftType]})`,
+          description: SHIFT_DESC[shiftType],
+        });
+        fields.push(fixedField('Bit 4', 'b4', 4, 4, 1, '1 = shift amount comes from Rs (register-shift form)'));
       } else {
         const shiftAmt = (op2enc >>> 7) & 0x1F;
         fields.push({
@@ -383,15 +390,15 @@ function buildDataProcFields(params: {
           display: `${shiftAmt.toString(2).padStart(5,'0')} (${shiftAmt})`,
           description: `Shift amount: ${shiftAmt} bits`,
         });
-        fields.push(fixedField('Bit 4', 'b4', 4, 4, 0, 'Shift by immediate (not register)'));
+        fields.push({
+          name: 'Shift Type', shortName: 'stype',
+          highBit: 6, lowBit: 5, color: 'op2-shift-type',
+          value: shiftType, known: true,
+          display: `${shiftType.toString(2).padStart(2,'0')} (${SHIFT_NAMES[shiftType]})`,
+          description: SHIFT_DESC[shiftType],
+        });
+        fields.push(fixedField('Bit 4', 'b4', 4, 4, 0, '0 = shift amount is immediate (immediate-shift form)'));
       }
-      fields.push({
-        name: 'Shift Type', shortName: 'stype',
-        highBit: 6, lowBit: 5, color: 'op2-shift-type',
-        value: shiftType, known: true,
-        display: `${shiftType.toString(2).padStart(2,'0')} (${SHIFT_NAMES[shiftType]})`,
-        description: SHIFT_DESC[shiftType],
-      });
       fields.push({
         name: 'Rm', shortName: 'Rm',
         highBit: 3, lowBit: 0, color: 'op2-rm',
@@ -631,6 +638,8 @@ function parseOp2(raw: string, enc: number, mask: number): { op2enc: number; isI
 
   [enc, mask] = setBits(enc, mask, 25, 25, 0);  // I=0
   [enc, mask] = setBits(enc, mask, 3, 0, rm);
+  // In ARM data-processing register form, omitted shift means ", LSL #0".
+  [enc, mask] = setBits(enc, mask, 11, 4, 0);
 
   let op2enc = rm;
   if (commaIdx >= 0) {

@@ -220,6 +220,39 @@ const EXAMPLES = [
   'NOP', 'MOVEQ R0, #1', 'ANDNE R5, R5, #0xFF',
 ]
 
+const UI_TEST_OPS = new Set(['TST', 'TEQ', 'CMP', 'CMN'])
+const UI_MOVE_OPS = new Set(['MOV', 'MVN'])
+
+function parseUiDataOp(mnemonic: string): string {
+  let opBase = mnemonic.toUpperCase()
+
+  const condSuffixes = ['EQ','NE','CS','HS','CC','LO','MI','PL','VS','VC','HI','LS','GE','LT','GT','LE','AL']
+  for (const cond of condSuffixes) {
+    if (!opBase.endsWith(cond)) continue
+
+    const base = opBase.slice(0, -cond.length)
+    const baseNoS = base.endsWith('S') ? base.slice(0, -1) : base
+    if (baseNoS) {
+      opBase = base
+      break
+    }
+  }
+
+  if (opBase.endsWith('S')) opBase = opBase.slice(0, -1)
+  return opBase
+}
+
+function countTopLevelCommas(text: string): number {
+  let commas = 0
+  let depth = 0
+  for (const ch of text) {
+    if (ch === '[' || ch === '{' || ch === '(') depth += 1
+    else if (ch === ']' || ch === '}' || ch === ')') depth = Math.max(0, depth - 1)
+    else if (ch === ',' && depth === 0) commas += 1
+  }
+  return commas
+}
+
 // ─── FlagRow — single flag with dropdown ─────────────────────────────────────
 
 function FlagRow({ flag, field, result, onChange }: {
@@ -354,48 +387,28 @@ export default function App() {
 
   const hoveredField = hovered ? result.fields.find(f => f.shortName === hovered) : null
 
+  const showsImplicitLsl0 = useMemo(() => {
+    if (result.error || result.instrType !== 'data-proc') return false
+    if (/\b(LSL|LSR|ASR|ROR|RRX)\b/i.test(input)) return false
+
+    const raw = input.trim()
+    const firstSpace = raw.search(/\s/)
+    if (firstSpace < 0) return false
+
+    const mnem = raw.slice(0, firstSpace)
+    const argsRaw = raw.slice(firstSpace + 1).trim()
+    const op = parseUiDataOp(mnem)
+
+    const baseCommas = UI_TEST_OPS.has(op) || UI_MOVE_OPS.has(op) ? 1 : 2
+    if (countTopLevelCommas(argsRaw) > baseCommas) return false
+
+    const rmField = result.fields.find(f => f.shortName === 'Rm')
+    const iField = result.fields.find(f => f.shortName === 'I')
+    return !!rmField?.known && iField?.value === 0
+  }, [input, result])
+
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
-
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <header className="shrink-0 flex items-center gap-3 px-6 py-3 border-b border-zinc-800/80 bg-zinc-900/50">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-            <Cpu className="size-4 text-blue-400" />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold leading-none">ARMv7 Instruction Encoder</h1>
-            <p className="text-[11px] text-zinc-500 mt-0.5">visualise · learn · decode</p>
-          </div>
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          {result.error && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded border text-red-400 bg-red-900/20 border-red-800/40">
-              {result.error}
-            </span>
-          )}
-          {!result.error && (
-            <span className={cn(
-              'text-xs font-mono px-2 py-0.5 rounded border',
-              result.partial
-                ? 'text-amber-300 bg-amber-950/30 border-amber-800/40'
-                : 'text-emerald-300 bg-emerald-950/30 border-emerald-800/40',
-            )}>
-              {result.partial ? 'partial' : 'complete'}
-            </span>
-          )}
-          <span className={cn(
-            'text-sm font-mono font-bold px-3 py-1 rounded-lg border tracking-widest',
-            result.partial
-              ? 'text-amber-200 bg-amber-950/20 border-amber-800/30'
-              : 'text-emerald-200 bg-emerald-950/20 border-emerald-800/30',
-          )}>
-            {hexDisplay}
-          </span>
-        </div>
-      </header>
-
       {/* ── Instruction input ────────────────────────────────────────────── */}
       <div className="shrink-0 px-6 pt-5 pb-4 border-b border-zinc-800/60">
         <div className="flex items-center gap-3">
@@ -403,6 +416,14 @@ export default function App() {
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs text-zinc-600 font-mono pointer-events-none select-none">
               asm
             </span>
+            {showsImplicitLsl0 && (
+              <span
+                className="absolute top-1/2 -translate-y-1/2 text-zinc-600/80 font-mono text-2xl font-semibold pointer-events-none select-none whitespace-nowrap"
+                style={{ left: `calc(3.5rem + ${Math.max(input.length, 0)}ch + 0.5ch)` }}
+              >
+                , LSL #0
+              </span>
+            )}
             <input
               ref={inputRef}
               value={input}
@@ -449,6 +470,32 @@ export default function App() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-end gap-2 min-h-7">
+          {result.error && (
+            <span className="text-xs font-mono px-2 py-0.5 rounded border text-red-400 bg-red-900/20 border-red-800/40">
+              {result.error}
+            </span>
+          )}
+          {!result.error && (
+            <span className={cn(
+              'text-xs font-mono px-2 py-0.5 rounded border',
+              result.partial
+                ? 'text-amber-300 bg-amber-950/30 border-amber-800/40'
+                : 'text-emerald-300 bg-emerald-950/30 border-emerald-800/40',
+            )}>
+              {result.partial ? 'partial' : 'complete'}
+            </span>
+          )}
+          <span className={cn(
+            'text-sm font-mono font-bold px-3 py-1 rounded-lg border tracking-widest',
+            result.partial
+              ? 'text-amber-200 bg-amber-950/20 border-amber-800/30'
+              : 'text-emerald-200 bg-emerald-950/20 border-emerald-800/30',
+          )}>
+            {hexDisplay}
+          </span>
         </div>
       </div>
 
